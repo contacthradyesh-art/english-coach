@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <title>English Coach — Voice Practice</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #0b1020; color: #eef2ff; padding: 24px 14px; }
+    main { max-width: 760px; margin: 0 auto; }
+    .panel { background: #151d32; border: 1px solid #2b3652; border-radius: 18px; padding: 22px; margin: 16px 0; }
+    h1 { margin: 0 0 8px; font-size: clamp(1.6rem, 5vw, 2.2rem); }
+    p, label, small { color: #c4cce0; line-height: 1.55; }
+    label { display: block; margin: 16px 0 7px; font-weight: 650; }
+    select, input, textarea { width: 100%; padding: 12px; border: 1px solid #465474; border-radius: 10px; background: #0d1426; color: #fff; font: inherit; }
+    textarea { min-height: 90px; resize: vertical; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    button { border: 0; border-radius: 10px; padding: 12px 17px; font: inherit; font-weight: 700; cursor: pointer; background: #8b7cff; color: #101326; }
+    button.secondary { background: #293653; color: #f3f5ff; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    #status { min-height: 24px; color: #b8c4ff; }
+    .words { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .word { padding: 7px 10px; border-radius: 8px; background: #293653; }
+    .matched { background: #164e3b; color: #a7f3d0; }
+    .missed { background: #642b38; color: #fecdd3; text-decoration: line-through; }
+    .legend { font-size: .9rem; }
+    footer { color: #9aa7c4; font-size: .85rem; padding: 8px 2px 24px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>English Coach 🎙️</h1>
+    <p>Speak one sentence at a time. Compare the browser transcript with your target sentence.</p>
+  </header>
+
+  <section class="panel">
+    <label for="language">Recognition language</label>
+    <select id="language">
+      <option value="en-IN">English (India) — en-IN</option>
+      <option value="hi-IN">Hindi (India) — hi-IN</option>
+    </select>
+
+    <label for="target">Target sentence</label>
+    <textarea id="target">I want to improve my English speaking skills.</textarea>
+
+    <div class="actions">
+      <button id="start">Start recording</button>
+      <button id="stop" class="secondary" disabled>Stop</button>
+    </div>
+    <p id="status" role="status" aria-live="polite">Ready. Allow microphone access when your browser asks.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Recognized transcript</h2>
+    <textarea id="transcript" placeholder="Your recognized words will appear here..." aria-label="Recognized transcript"></textarea>
+    <div class="actions">
+      <button id="compare" class="secondary">Compare with target</button>
+      <button id="copy">Copy for Claude</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Word-by-word match</h2>
+    <p class="legend"><span class="matched">Green = matched</span> &nbsp; <span class="missed">Red = missing or different</span></p>
+    <div id="targetWords" class="words" aria-label="Target word comparison"></div>
+    <p id="summary"></p>
+  </section>
+
+  <footer>
+    This page uses your browser's Web Speech API. Recognition accuracy and availability vary by browser and language. The transcript is not a direct assessment of your real voice, accent, or pronunciation. Browser speech services may process audio according to your browser provider's privacy terms.
+  </footer>
+</main>
+
+<script>
+(() => {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const language = document.getElementById('language');
+  const target = document.getElementById('target');
+  const transcript = document.getElementById('transcript');
+  const status = document.getElementById('status');
+  const start = document.getElementById('start');
+  const stop = document.getElementById('stop');
+  const compare = document.getElementById('compare');
+  const copy = document.getElementById('copy');
+  const targetWords = document.getElementById('targetWords');
+  const summary = document.getElementById('summary');
+  let recognition = null;
+  let finalText = '';
+
+  function tokens(text) {
+    return text.toLocaleLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
+  }
+
+  function compareWords() {
+    const expected = tokens(target.value);
+    const spoken = tokens(transcript.value);
+    targetWords.replaceChildren();
+    if (!expected.length) {
+      summary.textContent = 'Enter a target sentence first.';
+      return;
+    }
+    let matched = 0;
+    const used = new Set();
+    expected.forEach((word, index) => {
+      const span = document.createElement('span');
+      span.className = 'word';
+      span.textContent = word;
+      if (spoken[index] === word) {
+        span.classList.add('matched');
+        matched += 1;
+        used.add(index);
+      } else {
+        span.classList.add('missed');
+      }
+      targetWords.appendChild(span);
+    });
+    const extras = spoken.filter((word, index) => !used.has(index) && expected[index] !== word);
+    const percent = Math.round((matched / expected.length) * 100);
+    summary.textContent = matched + ' of ' + expected.length + ' target words matched in the same position (' + percent + '%).' +
+      (extras.length ? ' Check changed or extra words in the transcript.' : '');
+  }
+
+  function setRecording(active) {
+    start.disabled = active || !SpeechRecognition;
+    stop.disabled = !active;
+  }
+
+  if (!SpeechRecognition) {
+    status.textContent = 'Speech recognition is not supported in this browser. Try a current Chrome or Chromium-based browser.';
+    start.disabled = true;
+  }
+
+  start.addEventListener('click', () => {
+    if (!SpeechRecognition) return;
+    recognition = new SpeechRecognition();
+    recognition.lang = language.value;
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    finalText = transcript.value.trim();
+    if (finalText) finalText += ' ';
+
+    recognition.onstart = () => {
+      status.textContent = 'Listening… Speak clearly and pause naturally.';
+      setRecording(true);
+    };
+    recognition.onresult = event => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const piece = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalText += piece + ' ';
+        else interim += piece;
+      }
+      transcript.value = (finalText + interim).trim();
+    };
+    recognition.onerror = event => {
+      status.textContent = 'Recognition error: ' + event.error + '. Check microphone permission and browser support.';
+    };
+    recognition.onend = () => {
+      setRecording(false);
+      status.textContent = 'Recording stopped. Review the transcript and compare it with the target.';
+      compareWords();
+    };
+    try { recognition.start(); }
+    catch (error) { status.textContent = 'Could not start: ' + error.message; setRecording(false); }
+  });
+
+  stop.addEventListener('click', () => {
+    if (recognition) recognition.stop();
+  });
+  compare.addEventListener('click', compareWords);
+  copy.addEventListener('click', async () => {
+    const text = 'Target: ' + target.value.trim() + '\nTranscript: ' + transcript.value.trim() +
+      '\nPlease compare this speech-to-text transcript with the target. Assess text differences only; you have not heard my actual audio.';
+    try {
+      await navigator.clipboard.writeText(text);
+      status.textContent = 'Copied. Paste the result into Claude for feedback.';
+    } catch (error) {
+      status.textContent = 'Clipboard access failed. Select and copy the transcript manually.';
+    }
+  });
+})();
+</script>
+</body>
+</html>
